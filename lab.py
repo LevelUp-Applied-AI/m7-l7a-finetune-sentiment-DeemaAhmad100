@@ -19,7 +19,7 @@ import os
 import numpy as np
 import pandas as pd
 from datasets import Dataset, DatasetDict
-from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score
 from transformers import (
     AutoModelForSequenceClassification,
     AutoTokenizer,
@@ -161,19 +161,30 @@ def evaluate_classifier(trainer: Trainer, tokenized_test) -> dict:
 
   
     per_class_f1_values = f1_score(labels, pred_indices, average=None)
+    per_class_precision_values = precision_score(labels, pred_indices, average=None)
+    per_class_recall_values = recall_score(labels, pred_indices, average=None)
 
-    
     id2label = trainer.model.config.id2label
 
     per_class_f1 = {
         id2label[i]: float(per_class_f1_values[i])
         for i in range(len(per_class_f1_values))
     }
+    per_class_precision = {
+        id2label[i]: float(per_class_precision_values[i])
+        for i in range(len(per_class_precision_values))
+    }
+    per_class_recall = {
+        id2label[i]: float(per_class_recall_values[i])
+        for i in range(len(per_class_recall_values))
+    }
 
     return {
         "accuracy": float(accuracy),
         "macro_f1": float(macro_f1),
         "per_class_f1": per_class_f1,
+        "per_class_precision": per_class_precision,
+        "per_class_recall": per_class_recall,
     }
 
 
@@ -195,6 +206,10 @@ def main() -> None:
     trainer.save_model(output_dir)
     tokenizer.save_pretrained(output_dir)
 
+    # Save training log
+    with open("training_log.json", "w") as f:
+        json.dump(trainer.state.log_history, f, indent=2)
+
     # Evaluate
     metrics = evaluate_classifier(trainer, tokenized["test"])
     with open("metrics.json", "w") as f:
@@ -211,6 +226,8 @@ def main() -> None:
         "predicted_label": [id2label[i] for i in pred_idx],
         "predicted_probability": [float(pred_probs[i, pred_idx[i]]) for i in range(len(pred_idx))],
     })
+    for class_idx, class_name in id2label.items():
+        df_out[f"prob_{class_name}"] = [float(pred_probs[i, class_idx]) for i in range(len(pred_idx))]
     df_out.to_csv("predictions.csv", index=False)
 
     print(f"Accuracy: {metrics['accuracy']:.4f}")
