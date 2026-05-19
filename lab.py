@@ -29,6 +29,7 @@ from transformers import (
 )
 
 
+# 3-class sentiment label mapping (matches the curated dataset's `label` column)
 ID2LABEL = {0: "negative", 1: "neutral", 2: "positive"}
 LABEL2ID = {v: k for k, v in ID2LABEL.items()}
 
@@ -47,10 +48,13 @@ def prepare_dataset(data_path: str, test_size: float = 0.2, seed: int = 42) -> D
     """
     Load the CSV at `data_path` and produce a train/test split.
     """
+    # قراءة الـ CSV بـ pandas
     df = pd.read_csv(data_path)
 
+    # تحويله لـ HuggingFace Dataset
     ds = Dataset.from_pandas(df, preserve_index=False)
 
+    # تقسيمه 80% train و 20% test
     split = ds.train_test_split(test_size=test_size, seed=seed)
 
     return split
@@ -60,9 +64,11 @@ def tokenize_dataset(ds_dict: DatasetDict, tokenizer, max_length: int = 128) -> 
     """
     Tokenize all splits in a DatasetDict.
     """
+    # تعريف دالة التحويل
     def tokenize_fn(batch):
         return tokenizer(batch["text"], truncation=True, max_length=max_length)
 
+    # تطبيقها على كل البيانات
     tokenized = ds_dict.map(tokenize_fn, batched=True)
 
     return tokenized
@@ -70,9 +76,9 @@ def tokenize_dataset(ds_dict: DatasetDict, tokenizer, max_length: int = 128) -> 
 
 def make_training_args(
     output_dir: str,
-    lr: float = 5e-5,
-    epochs: int = 2,
-    batch_size: int = 8,
+    lr: float = 2e-4,
+    epochs: int = 5,
+    batch_size: int = 4,
     seed: int = 42,
 ) -> TrainingArguments:
     """Return a TrainingArguments configured for fine-tuning."""
@@ -82,7 +88,7 @@ def make_training_args(
         num_train_epochs=epochs,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
-        eval_strategy="epoch",       
+        eval_strategy="epoch",       # اسم جديد في transformers >= 4.41
         save_strategy="epoch",
         logging_steps=50,
         seed=seed,
@@ -95,7 +101,7 @@ def compute_metrics(eval_pred):
     """
     logits, labels = eval_pred
 
-   
+    # خذ أعلى قيمة كـ prediction
     predictions = np.argmax(logits, axis=1)
 
     accuracy = accuracy_score(labels, predictions)
@@ -114,7 +120,7 @@ def train_classifier(
     """
     Construct and train a Trainer.
     """
-   
+    # حمّل النموذج مع إعدادات الـ labels
     model = AutoModelForSequenceClassification.from_pretrained(
         model_name,
         num_labels=num_labels,
@@ -122,10 +128,10 @@ def train_classifier(
         label2id=LABEL2ID,
     )
 
-   
+    # أداة الـ padding الديناميكي
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
-   
+    # بناء الـ Trainer
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -136,7 +142,7 @@ def train_classifier(
         compute_metrics=compute_metrics,
     )
 
-   
+    # التدريب الفعلي
     trainer.train()
 
     return trainer
@@ -146,24 +152,25 @@ def evaluate_classifier(trainer: Trainer, tokenized_test) -> dict:
     """
     Evaluate the trainer's model on the test split.
     """
-   
+    # الحصول على التنبؤات
     preds_output = trainer.predict(tokenized_test)
 
     logits = preds_output.predictions
     labels = preds_output.label_ids
 
-    
+    # تحويل logits لـ class indices
     pred_indices = np.argmax(logits, axis=1)
 
-  
+    # حساب الدقة والـ F1 الكلي
     accuracy = accuracy_score(labels, pred_indices)
     macro_f1 = f1_score(labels, pred_indices, average="macro")
 
-  
+    # حساب الـ F1 لكل class
     per_class_f1_values = f1_score(labels, pred_indices, average=None)
-    per_class_precision_values = precision_score(labels, pred_indices, average=None)
-    per_class_recall_values = recall_score(labels, pred_indices, average=None)
+    per_class_precision_values = precision_score(labels, pred_indices, average=None, zero_division=0)
+    per_class_recall_values = recall_score(labels, pred_indices, average=None, zero_division=0)
 
+    # قراءة أسماء الـ labels من النموذج (مش hard-coded)
     id2label = trainer.model.config.id2label
 
     per_class_f1 = {
