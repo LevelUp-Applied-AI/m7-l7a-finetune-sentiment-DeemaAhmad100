@@ -13,14 +13,29 @@ def reliability_diagram(probs: np.ndarray, y_true: np.ndarray, n_bins: int = 10)
 
     Returns (bucket_centers, bucket_accuracies, bucket_counts), all length n_bins.
     """
-    # TODO: bin edges via np.linspace(0, 1, n_bins + 1)
-    # TODO: bucket_centers = midpoints of edges
-    # TODO: for each prediction, take the max probability and the predicted class index
-    # TODO: assign each prediction to a bucket by its max probability
-    # TODO: bucket_accuracy = mean of (predicted == true) within the bucket; nan or 0 if empty
-    # TODO: bucket_count = number of predictions in the bucket
-    # TODO: return three numpy arrays
-    raise NotImplementedError
+    edges = np.linspace(0, 1, n_bins + 1)
+    centers = (edges[:-1] + edges[1:]) / 2.0
+
+    confidences = np.max(probs, axis=1)          # max predicted probability per sample
+    preds = np.argmax(probs, axis=1)             # predicted class per sample
+    correct = (preds == y_true).astype(float)
+
+    bucket_accuracies = np.zeros(n_bins)
+    bucket_counts = np.zeros(n_bins, dtype=int)
+
+    for i in range(n_bins):
+        lo, hi = edges[i], edges[i + 1]
+        if i < n_bins - 1:
+            mask = (confidences >= lo) & (confidences < hi)
+        else:
+            # last bin is inclusive on the right so p == 1.0 lands here
+            mask = (confidences >= lo) & (confidences <= hi)
+
+        count = int(np.sum(mask))
+        bucket_counts[i] = count
+        bucket_accuracies[i] = float(np.mean(correct[mask])) if count > 0 else 0.0
+
+    return centers, bucket_accuracies, bucket_counts
 
 
 def expected_calibration_error(probs: np.ndarray, y_true: np.ndarray, n_bins: int = 10) -> float:
@@ -29,11 +44,29 @@ def expected_calibration_error(probs: np.ndarray, y_true: np.ndarray, n_bins: in
 
     A perfectly calibrated model has ECE = 0.
     """
-    # TODO: bucket predictions as in reliability_diagram
-    # TODO: for each bucket, compute confidence (mean max probability) and accuracy
-    # TODO: weight |accuracy - confidence| by bucket fraction; sum
-    # TODO: return float
-    raise NotImplementedError
+    edges = np.linspace(0, 1, n_bins + 1)
+
+    confidences = np.max(probs, axis=1)
+    preds = np.argmax(probs, axis=1)
+    correct = (preds == y_true).astype(float)
+    N = len(y_true)
+
+    ece = 0.0
+    for i in range(n_bins):
+        lo, hi = edges[i], edges[i + 1]
+        if i < n_bins - 1:
+            mask = (confidences >= lo) & (confidences < hi)
+        else:
+            mask = (confidences >= lo) & (confidences <= hi)
+
+        count = int(np.sum(mask))
+        if count == 0:
+            continue
+        bucket_acc = float(np.mean(correct[mask]))
+        bucket_conf = float(np.mean(confidences[mask]))
+        ece += (count / N) * abs(bucket_acc - bucket_conf)
+
+    return float(ece)
 
 
 def plot_reliability(centers: np.ndarray, accs: np.ndarray, counts: np.ndarray, output_path: str) -> None:
