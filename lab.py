@@ -19,7 +19,7 @@ import os
 import numpy as np
 import pandas as pd
 from datasets import Dataset, DatasetDict
-from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score
 from transformers import (
     AutoModelForSequenceClassification,
     AutoTokenizer,
@@ -152,34 +152,41 @@ def evaluate_classifier(trainer: Trainer, tokenized_test) -> dict:
     """
     Evaluate the trainer's model on the test split.
     """
-    # الحصول على التنبؤات
     preds_output = trainer.predict(tokenized_test)
 
     logits = preds_output.predictions
     labels = preds_output.label_ids
-
-    # تحويل logits لـ class indices
     pred_indices = np.argmax(logits, axis=1)
 
-    # حساب الدقة والـ F1 الكلي
     accuracy = accuracy_score(labels, pred_indices)
     macro_f1 = f1_score(labels, pred_indices, average="macro")
 
-    # حساب الـ F1 لكل class
-    per_class_f1_values = f1_score(labels, pred_indices, average=None)
-
-    # قراءة أسماء الـ labels من النموذج (مش hard-coded)
     id2label = trainer.model.config.id2label
+    label_ids = sorted(id2label.keys())
+
+    per_class_f1_values = f1_score(labels, pred_indices, labels=label_ids, average=None, zero_division=0)
+    per_class_precision_values = precision_score(labels, pred_indices, labels=label_ids, average=None, zero_division=0)
+    per_class_recall_values = recall_score(labels, pred_indices, labels=label_ids, average=None, zero_division=0)
 
     per_class_f1 = {
-        id2label[i]: float(per_class_f1_values[i])
-        for i in range(len(per_class_f1_values))
+        id2label[i]: float(per_class_f1_values[idx])
+        for idx, i in enumerate(label_ids)
+    }
+    per_class_precision = {
+        id2label[i]: float(per_class_precision_values[idx])
+        for idx, i in enumerate(label_ids)
+    }
+    per_class_recall = {
+        id2label[i]: float(per_class_recall_values[idx])
+        for idx, i in enumerate(label_ids)
     }
 
     return {
         "accuracy": float(accuracy),
         "macro_f1": float(macro_f1),
         "per_class_f1": per_class_f1,
+        "per_class_precision": per_class_precision,
+        "per_class_recall": per_class_recall,
     }
 
 
@@ -201,6 +208,9 @@ def main() -> None:
     trainer.save_model(output_dir)
     tokenizer.save_pretrained(output_dir)
 
+    with open("training_log.json", "w") as f:
+        json.dump(trainer.state.log_history, f, indent=2)
+
     # Evaluate
     metrics = evaluate_classifier(trainer, tokenized["test"])
     with open("metrics.json", "w") as f:
@@ -217,6 +227,8 @@ def main() -> None:
         "predicted_label": [id2label[i] for i in pred_idx],
         "predicted_probability": [float(pred_probs[i, pred_idx[i]]) for i in range(len(pred_idx))],
     })
+    for class_id, class_name in id2label.items():
+        df_out[f"prob_{class_name}"] = pred_probs[:, class_id].astype(float)
     df_out.to_csv("predictions.csv", index=False)
 
     print(f"Accuracy: {metrics['accuracy']:.4f}")
