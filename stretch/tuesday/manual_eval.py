@@ -17,13 +17,28 @@ def manual_predict(model, tokenizer, texts: list, batch_size: int = 8):
       preds: shape (N,), int class indices
       probs: shape (N, num_classes), probabilities (post-softmax)
     """
-    # TODO: iterate texts in batches
-    # TODO: tokenize each batch with truncation, max_length=128, padding=True, return_tensors='pt'
-    # TODO: forward pass under torch.no_grad()
-    # TODO: softmax over the last dim
-    # TODO: argmax to get class indices
-    # TODO: collect into numpy arrays of shape (N,) and (N, num_classes); return both
-    raise NotImplementedError
+    model.eval()
+    device = next(model.parameters()).device
+
+    all_probs = []
+    for i in range(0, len(texts), batch_size):
+        batch_texts = texts[i : i + batch_size]
+        encoding = tokenizer(
+            batch_texts,
+            truncation=True,
+            max_length=128,
+            padding=True,
+            return_tensors="pt",
+        )
+        encoding = {k: v.to(device) for k, v in encoding.items()}
+        with torch.no_grad():
+            outputs = model(**encoding)
+        batch_probs = torch.softmax(outputs.logits, dim=-1).cpu().numpy()
+        all_probs.append(batch_probs)
+
+    probs = np.concatenate(all_probs, axis=0)   # (N, num_classes)
+    preds = np.argmax(probs, axis=1)             # (N,)
+    return preds, probs
 
 
 def compute_classification_report_from_arrays(y_true, y_pred) -> dict:
@@ -38,11 +53,27 @@ def compute_classification_report_from_arrays(y_true, y_pred) -> dict:
         "per_class": {label_index: {"precision": ..., "recall": ..., "f1": ...}, ...},
       }
     """
-    # TODO: compute true positives / false positives / false negatives per class
-    # TODO: precision = TP / (TP + FP); guard divide-by-zero
-    # TODO: recall = TP / (TP + FN)
-    # TODO: f1 = 2 * P * R / (P + R)
-    # TODO: accuracy = sum(y_pred == y_true) / N
-    # TODO: macro-F1 = mean of per-class f1 scores
-    # TODO: assemble and return the dict
-    raise NotImplementedError
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+    classes = np.unique(np.concatenate([y_true, y_pred]))
+
+    accuracy = float(np.mean(y_pred == y_true))
+
+    per_class = {}
+    f1_scores = []
+    for c in classes:
+        tp = float(np.sum((y_pred == c) & (y_true == c)))
+        fp = float(np.sum((y_pred == c) & (y_true != c)))
+        fn = float(np.sum((y_pred != c) & (y_true == c)))
+
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall    = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1        = (2 * precision * recall / (precision + recall)
+                     if (precision + recall) > 0 else 0.0)
+
+        per_class[int(c)] = {"precision": precision, "recall": recall, "f1": f1}
+        f1_scores.append(f1)
+
+    macro_f1 = float(np.mean(f1_scores))
+
+    return {"accuracy": accuracy, "macro_f1": macro_f1, "per_class": per_class}
